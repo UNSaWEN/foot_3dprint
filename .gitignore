@@ -27,7 +27,10 @@ output/zones/
 *.obj
 *.3mf
 *.npz
-input/
+input/*
+!input/README.md
+!input/README.en.md
+!input/README.zh-CN.md
 scripts/input/
 
 # TPMS numpy arrays
