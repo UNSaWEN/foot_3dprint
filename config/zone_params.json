@@ -1,0 +1,69 @@
+{
+  "inputs": [
+    {
+      "name": "left",
+      "path": "input/left_insole.stl",
+      "mode": "insole_solid",
+      "side": "left"
+    },
+    {
+      "name": "right",
+      "path": "input/right_insole.stl",
+      "mode": "insole_solid",
+      "side": "right"
+    }
+  ],
+  "default_profile": "healthy_asian_male_mixed",
+  "units_hint": "mm",
+  "long_axis": "auto",
+  "scan_preprocess": {
+    "length_axis": "y",
+    "lateral_axis": "x",
+    "surface_axis": "z",
+    "surface_direction": "positive",
+    "target_thickness_mm": 6.0,
+    "bottom_clearance_mm": 0.5,
+    "outline_margin_mm": 2.0,
+    "smoothing_iterations": 0,
+    "max_gap_mm": 35.0,
+    "min_foot_length_mm": 180.0,
+    "max_foot_length_mm": 350.0
+  },
+  "zone_ratios": {
+    "heel": 0.25,
+    "arch": 0.25,
+    "forefoot": 0.30,
+    "toe": 0.20
+  },
+  "zone_shape": {
+    "enabled": true,
+    "heel_curve_mm": 12.0,
+    "arch_curve_mm": 10.0,
+    "toe_curve_mm": 12.0,
+    "center_power": 1.6,
+    "inner_side": "auto",
+    "forefoot_center_width_ratio": 0.28
+  },
+  "edge_frame_margin_mm": 5.0,
+  "voxel_pitch_mm": 1.0,
+  "max_voxels": 1500000,
+  "tpms": {
+    "type": "gyroid",
+    "wavelength_mm": 12.0,
+    "threshold_overrides": {},
+    "transition_mm": 8.0
+  },
+  "shell": {
+    "skin_layers": 1,
+    "close_iterations": 1
+  },
+  "surface": {
+    "bottom_solid_layers": 2,
+    "top_skin_layers": 1,
+    "top_dense_layers": 1,
+    "top_dense_threshold_boost": 0.08
+  },
+  "output": {
+    "root": "output"
+  }
+}

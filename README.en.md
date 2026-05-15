@@ -1,0 +1,455 @@
+# Research-Driven Insole Zoning and Lattice Workflow
+
+[中文文档](README.zh-CN.md) | [English](README.en.md)
+
+Generates zoned `3MF` files, Bambu engineering `3MF` with local parameters, and printable TPMS/gyroid lattice insole `STL` from left/right insole `STL` models.
+
+Default zoning uses a research-driven anatomical region model:
+
+- `innerHeel`
+- `outerHeel`
+- `innerArch`
+- `outerArch`
+- `innerForefoot`
+- `centralForefoot`
+- `outerForefoot`
+- `toe`
+- `edgeFrame`
+
+The goal is to separate common high-pressure plantar regions, arch support zones, and outer rim stabilization zones. The default template targets `healthy adult Asian males` in a `daily walking + light sports` mixed scenario, while retaining profile switching capability for different user needs.
+
+## Project Goals
+
+- Automatically generate zoned results from existing insole `STL` without interactive modeling software
+- Control infill patterns and density per zone via slicer modifiers
+- Preserve a direct path to printable lattice `STL`
+- Make parameters, zoning, and export workflows fully scriptable and reproducible
+
+## Design Rationale
+
+Default zones and parameters are engineering starting points based on public literature, not medical prescriptions. The default template primarily references:
+
+- Plantar pressure redistribution in asymptomatic men using different insoles
+- Baseline plantar pressure in normal young Chinese adults during standing and walking
+- General principles of arch support, total contact, and porous structure for pressure redistribution
+- Engineering needs for outer rim stability in slicing and print durability
+
+Short reference sources in `REFERENCES.en.md`.
+
+## Data Source Switching
+
+This project supports two input data sources. Each input can independently choose its mode, and they can be mixed.
+
+### Source 1: Existing Closed Insole STL (`insole_solid`)
+
+Use case: You already have a complete insole 3D model (watertight solid), such as an STL exported from CAD software.
+
+```json
+{
+  "name": "left",
+  "path": "input/left_insole.stl",
+  "mode": "insole_solid",
+  "side": "left"
+}
+```
+
+- In this mode, `prepare_inputs.py` skips preprocessing and reuses the original STL directly
+- No `scan_preprocess` configuration needed
+
+### Source 2: Direct Plantar Scan Open Surface STL (`plantar_scan_surface`)
+
+Use case: You scanned the sole of the foot using a 3D scanning app (e.g., Polycam, Scaniverse) and got an **open surface** rather than a closed solid.
+
+```json
+{
+  "name": "left",
+  "path": "input/left_plantar_scan.stl",
+  "mode": "plantar_scan_surface",
+  "side": "left"
+}
+```
+
+- In this mode, `prepare_inputs.py` closes the open surface into a printable insole blank
+- **Must configure** `scan_preprocess` axis parameters to match the app's exported coordinate system
+- Recommended coordinate convention: foot width = X, foot length = Y, sole height/insole thickness = Z
+
+### Mixed Usage Example
+
+Left and right feet can use different data sources:
+
+```json
+"inputs": [
+  {
+    "name": "left",
+    "path": "input/left_insole.stl",
+    "mode": "insole_solid",
+    "side": "left"
+  },
+  {
+    "name": "right",
+    "path": "input/right_plantar_scan.stl",
+    "mode": "plantar_scan_surface",
+    "side": "right"
+  }
+]
+```
+
+### Switching Steps Summary
+
+1. Place STL files in `input/` (or any resolvable path)
+2. Edit the `inputs` section in `config/zone_params.json`
+3. If using scan data, confirm `scan_preprocess.*` axis parameters match
+4. Run `python scripts/prepare_inputs.py` to verify preprocessing results
+
+## Directory Structure
+
+- `config/zone_params.json`: Main configuration file
+- `scripts/prepare_inputs.py`: Preprocess plantar scan surfaces into closed insole blanks
+- `scripts/inspect_mesh.py`: Inspect STL dimensions, bounding box, watertightness, and export previews
+- `scripts/build_zones.py`: Generate research-driven anatomical zones and zone previews
+- `scripts/generate_tpms.py`: Generate gyroid voxel fields from zone thresholds
+- `scripts/clip_lattice.py`: Clip voxel lattice into insole shape and export final STL
+- `scripts/export_result.py`: Validate exported final STL
+- `scripts/export_zoned_3mf.py`: Export basic insole + modifier zone geometry as standard `3MF`
+- `scripts/export_bambu_project_3mf.py`: Export Bambu engineering `3MF` with local slicer parameters from template
+- `scripts/run_pipeline.py`: Run the full workflow in order
+- `scripts/generate_placeholders.py`: Generate placeholder STL files for first-run validation
+- `tests/`: Core logic regression tests
+- `bootstrap_uv.ps1`: Initialize local virtual environment using `uv`
+
+## Quick Start
+
+### 1. Install Dependencies
+
+**Recommended (cross-platform): Use uv**
+
+[uv](https://github.com/astral-sh/uv) is a fast Python package manager supporting Windows / macOS / Linux.
+
+After installing uv, run in the project directory:
+
+```powershell
+# Windows
+.\bootstrap_uv.ps1
+```
+
+```bash
+# macOS / Linux
+uv venv --python 3.12 && uv pip install -r requirements.txt
+```
+
+**Alternative: Direct pip install**
+
+If you already have a working Python:
+
+```bash
+python -m pip install -r requirements.txt
+```
+
+### 2. Run the Full Pipeline
+
+```bash
+python scripts/run_pipeline.py
+```
+
+If you want to use your own input files without editing the config file:
+
+```bash
+# Override left and right input paths
+python scripts/run_pipeline.py \
+  --input "left=input/my_left.stl,mode=insole_solid,side=left" \
+  --input "right=input/my_right.stl,mode=insole_solid,side=right"
+
+# Left uses closed STL, right uses plantar scan
+python scripts/run_pipeline.py \
+  --input "left=input/my_left.stl,mode=insole_solid,side=left" \
+  --input "right=input/my_right_scan.stl,mode=plantar_scan_surface,side=right"
+```
+
+Note: The `--input` format uses comma-separated key=value pairs to avoid conflicts with Windows drive letters (`C:\`).
+
+### 3. Run Step by Step
+
+If you want to manually inspect at confirmation points:
+
+```bash
+python scripts/prepare_inputs.py
+python scripts/inspect_mesh.py
+python scripts/build_zones.py
+python scripts/generate_tpms.py
+python scripts/clip_lattice.py
+python scripts/export_result.py
+python scripts/export_zoned_3mf.py
+python scripts/export_bambu_project_3mf.py
+```
+
+## Output Files
+
+### 1. Prepared Insole Blanks
+
+Under `output/prepared/`:
+
+- `left_prepared_insole.stl`
+- `right_prepared_insole.stl`
+- `left_prepare_report.json`
+- `right_prepare_report.json`
+
+When input is `plantar_scan_surface`, this step closes the open plantar surface into a voxel-fillable insole blank. When input is `insole_solid`, it reuses the original closed STL and only outputs the preparation report.
+
+### 2. Zone Previews
+
+Under `output/zones/`:
+
+- `left_zones.json`
+- `right_zones.json`
+- `left_zones.png`
+- `right_zones.png`
+
+Here you can see:
+
+- Insole long axis identification result
+- Macro longitudinal zone boundaries: `heel / arch / forefoot / toe`
+- Curve zone parameters
+- Anatomical zone preview
+
+### 3. Printable Lattice STL
+
+Under `output/final/`:
+
+- `left_lattice_insole.stl`
+- `right_lattice_insole.stl`
+
+These files already include:
+
+- Outer rim frame
+- Top contact layers
+- Bottom support layers
+- Internal zoned TPMS
+
+### 4. Standard Zoned 3MF
+
+Under `output/final/`:
+
+- `left_zoned_modifiers.3mf`
+- `right_zoned_modifiers.3mf`
+
+Each `3MF` contains:
+
+- `*_base`
+- `*_innerHeel`
+- `*_outerHeel`
+- `*_innerArch`
+- `*_outerArch`
+- `*_innerForefoot`
+- `*_centralForefoot`
+- `*_outerForefoot`
+- `*_toe`
+- `*_edgeFrame`
+
+Companion settings files:
+
+- `left_zoned_modifiers_settings.json`
+- `right_zoned_modifiers_settings.json`
+- `left_zoned_modifiers_settings.md`
+- `right_zoned_modifiers_settings.md`
+
+Recommended workflow in Bambu Studio/OrcaSlicer:
+
+1. Keep `*_base` as a normal model
+2. Set all other objects as `modifier`
+3. Override infill per zone using the suggested parameters
+
+### 5. Bambu Engineering 3MF with Local Parameters
+
+Under `output/final/`:
+
+- `left_engineering_modifiers.3mf`
+- `right_engineering_modifiers.3mf`
+
+These files automatically embed local infill suggestions for each zone, suitable for direct observation and test slicing in Bambu Studio.
+
+## Default Zoning Strategy
+
+### Macro Longitudinal Zones
+
+Default longitudinal ratios:
+
+- `heel`: `25%`
+- `arch`: `25%`
+- `forefoot`: `30%`
+- `toe`: `20%`
+
+### Anatomical Zone Logic
+
+The current version further subdivides longitudinal zones into:
+
+- Heel: `innerHeel` / `outerHeel`
+- Midfoot: `innerArch` / `outerArch`
+- Forefoot: `innerForefoot` / `centralForefoot` / `outerForefoot`
+- Toe: `toe`
+- Outer rim stabilization: `edgeFrame`
+
+### Default Slicing Suggestions
+
+Current default suggestions:
+
+- `base`: `gyroid 20%`, `3` walls
+- `innerHeel`: `gyroid 24%`, `3` walls
+- `outerHeel`: `gyroid 20%`, `3` walls
+- `innerArch`: `gyroid 34%`, `4` walls
+- `outerArch`: `gyroid 26%`, `3` walls
+- `innerForefoot`: `gyroid 22%`, `3` walls
+- `centralForefoot`: `gyroid 22%`, `3` walls
+- `outerForefoot`: `gyroid 17%`, `2` walls
+- `toe`: `gyroid 13%`, `2` walls
+- `edgeFrame`: `grid 70%`, `4` walls
+
+### Switchable Profiles
+
+Switch built-in profiles via `default_profile` in `config/zone_params.json`:
+
+- `healthy_asian_male_mixed`: Default, suitable for daily walking and light sports mixed scenarios, `no local wall overrides`
+- `healthy_asian_male_daily_soft`: Softer daily feel, `no local wall overrides`
+- `healthy_asian_male_sport_stable`: More stable light sports template, `no local wall overrides`
+- `supportive_generic`: Stronger support generic template, `retains local wall overrides`
+
+The default design choice avoids writing individual local wall counts in modifiers to reduce hard peaks caused by additional perimeters at zone boundaries. Rim reinforcement primarily relies on `edgeFrame` high density and rim width rather than extra local walls.
+
+## Key Parameters
+
+The main parameter tuning entry point is `config/zone_params.json`.
+
+### Input Parameters
+
+- `inputs[].mode`: `insole_solid` for existing closed insole STL, `plantar_scan_surface` for open plantar scan STL from iPhone/FaceID-like apps
+- `inputs[].side`: `left / right`, records left/right foot source
+- `inputs[].prepared_path`: Optional; specify closed blank path after preprocessing scan input, defaults to `output/prepared/<name>_prepared_insole.stl`
+- `long_axis`: Length direction for downstream zoning; if scan data has unstable coordinates, explicitly set to `x / y / z`
+
+### Plantar Scan Preprocessing Parameters
+
+- `scan_preprocess.length_axis`: Heel-to-toe direction in the raw scan
+- `scan_preprocess.lateral_axis`: Medial-lateral direction in the raw scan
+- `scan_preprocess.surface_axis`: Sole height direction in the raw scan; preprocessing output normalizes to Z thickness direction
+- `scan_preprocess.surface_direction`: Positive or negative direction along the axis for sole surface height
+- `scan_preprocess.target_thickness_mm`: Base thickness for generating the insole blank
+- `scan_preprocess.bottom_clearance_mm`: Extra clearance between top plantar surface and bottom
+- `scan_preprocess.outline_margin_mm`: Boundary margin expanded from the plantar outline, adapting to different foot widths and arch concavity
+- `scan_preprocess.max_gap_mm`: Filters triangles spanning gaps too large across the scan
+- `scan_preprocess.min_foot_length_mm` / `max_foot_length_mm`: Quality check thresholds for unit or foot length anomalies
+
+### Zone Parameters
+
+- `default_profile`: Switch default template
+- `zone_settings_overrides`: Per-zone overrides for slicer suggestions in the current template, including whether to enable local walls
+- `zone_ratios`: Controls length ratios for `heel / arch / forefoot / toe` segments
+- `zone_shape.heel_curve_mm`: Heel boundary forward extension amplitude in the middle
+- `zone_shape.arch_curve_mm`: Arch boundary forward extension amplitude in the middle
+- `zone_shape.toe_curve_mm`: Forefoot-to-toe boundary early convergence amplitude in the middle
+- `zone_shape.inner_side`: `auto / min / max`, determines which side is closer to medial
+- `zone_shape.forefoot_center_width_ratio`: Central forefoot width ratio
+
+### Lattice Parameters
+
+- `voxel_pitch_mm`: Voxel resolution, currently defaults to `1.0 mm`
+- `tpms.wavelength_mm`: Gyroid wavelength
+- `tpms.threshold_overrides`: Local overrides for TPMS thresholds in the current template
+- `edge_frame_margin_mm`: Rim thickness
+
+### Surface and Slicer-Friendly Parameters
+
+- `surface.bottom_solid_layers`: Number of continuous bottom support layers
+- `surface.top_skin_layers`: Number of continuous top contact layers
+- `surface.top_dense_layers`: Number of top dense reinforcement layers
+- `surface.top_dense_threshold_boost`: Extra threshold for top dense layers
+
+## Suggested Workflow
+
+### A. Model Size and Orientation
+
+First check `output/inspection/` to confirm:
+
+- Left and right foot orientations are correct
+- Length, width, and thickness match expectations
+- No obvious flipping or unit anomalies
+
+For scan inputs, also check `output/prepared/*_prepare_report.json` to confirm:
+
+- `foot_length_mm` and `foot_width_mm` match the actual foot
+- `watertight` and `is_volume` are `true`
+- No unit, length, or blank generation anomalies in `warnings`
+
+Recommended scan coordinate convention: foot width = X, foot length = Y, sole height/insole thickness = Z. If your app outputs different coordinates, explicitly specify via `scan_preprocess.*_axis` and `long_axis` rather than relying on `auto` guessing.
+
+### B. Anatomical Zone Reasonableness
+
+Check `output/zones/*.png`, focusing on:
+
+- Whether the arch support zone lands where you want it lifted
+- Whether the forefoot tri-zones are too wide or narrow
+- Whether the heel medial/lateral zones are too aggressive
+
+### C. Slicer Readability
+
+Check:
+
+- `output/final/*_zoned_modifiers.3mf`
+- `output/final/*_engineering_modifiers.3mf`
+
+Key confirmations:
+
+- All modifiers are recognized by the slicer
+- Zone boundaries are not excessively jagged
+- Parameters are correctly written in the slicer
+
+### D. Actual Printing and Fitting
+
+Recommended order:
+
+1. Test slice first
+2. Then print single foot or partial samples
+3. Finally try full insoles
+
+If the foot feel is not right, prioritize adjusting:
+
+- Arch too stiff: Lower `innerArch` threshold or density
+- Forefoot too firm: Lower `innerForefoot` / `centralForefoot`
+- Heel too hard: Lower `innerHeel` first, then `outerHeel`
+- Outer edge collapses easily: Increase `edgeFrame` density or rim width
+
+## Parameter Tuning Tips
+
+- Quick style swap: Switch `default_profile` first
+- Approximate gradient with fewer walls in transition zones: Enable lower local walls for a few zones via `zone_settings_overrides` only, rather than enabling globally
+- Smoother boundaries: Lower `voxel_pitch_mm`
+- More arch support: Raise `innerArch`
+- Softer forefoot: Lower `innerForefoot`, `centralForefoot`, `outerForefoot`
+- More stable heel: Raise `innerHeel`
+- Fewer slicer errors: Adjust `surface.bottom_solid_layers` and `surface.top_skin_layers` first
+
+## Tests
+
+Run regression tests:
+
+```bash
+python -m unittest discover -s tests
+```
+
+Current test coverage:
+
+- Input mode discovery and scan preprocessing
+- Anatomical zone naming and region assignment
+- TPMS threshold mapping
+- Engineering `3MF` parameter writing
+- Top/bottom surface strategies
+
+## Limitations and Notes
+
+- Default parameters are engineering starting points, not a substitute for clinical prescriptions or personalized medical advice
+- Engineering `3MF` currently targets Bambu Studio-style templates; other slicers may require template field adaptation
+- Default thresholds and densities lean toward daily support/cushioning scenarios; sports scenarios typically require re-tuning
+
+## Future Improvements
+
+- Add example zone preview screenshots
+- Source and adaptation notes for template `3MF`
+- A set of default print material and slicer parameter references

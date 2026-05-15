@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+*.egg
+
+# Virtual environment override config
+.tmp_config_override.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Generated output (except README)
+output/final/
+output/inspection/
+output/prepared/
+output/tpms/
+output/zones/
+
+# Input raw meshes (STL) and other raw materials
+*.stl
+*.ply
+*.obj
+*.3mf
+*.npz
+input/
+scripts/input/
+
+# TPMS numpy arrays
+*.npz
+
+# Preview / snapshot images (keep only README)
+*.png
+*.jpg
+*.jpeg
+
+# Local config with personal paths
+config/local.json
+
+# Generated output (except README)
+!output/README.md
