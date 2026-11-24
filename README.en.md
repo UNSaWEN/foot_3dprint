@@ -70,6 +70,8 @@ Use case: You scanned the sole of the foot using a 3D scanning app (e.g., Polyca
 ```
 
 - In this mode, `prepare_inputs.py` closes the open surface into a printable insole blank
+- The outline is offset outward by `outline_margin_mm`; the bottom is flat and the top follows the scan
+- `scan_preprocess.max_relief_mm` defaults to `8.0` and limits rise above the lowest point; the prepare report includes the thickness range
 - **Must configure** `scan_preprocess` axis parameters to match the app's exported coordinate system
 - Recommended coordinate convention: foot width = X, foot length = Y, sole height/insole thickness = Z
 
@@ -193,7 +195,7 @@ Under `output/prepared/`:
 - `left_prepare_report.json`
 - `right_prepare_report.json`
 
-When input is `plantar_scan_surface`, this step closes the open plantar surface into a voxel-fillable insole blank. When input is `insole_solid`, it reuses the original closed STL and only outputs the preparation report.
+When input is `plantar_scan_surface`, this step closes the open plantar surface into a voxel-fillable insole blank: the outline is offset outward by `outline_margin_mm`, the bottom is flat, the top follows the scan, and rise above the lowest point is limited by `scan_preprocess.max_relief_mm` (default `8.0`). The prepare report includes the thickness range. When input is `insole_solid`, it reuses the original closed STL and only outputs the preparation report.
 
 ### 2. Zone Previews
 
@@ -333,7 +335,8 @@ The main parameter tuning entry point is `config/zone_params.json`.
 - `scan_preprocess.surface_direction`: Positive or negative direction along the axis for sole surface height
 - `scan_preprocess.target_thickness_mm`: Base thickness for generating the insole blank
 - `scan_preprocess.bottom_clearance_mm`: Extra clearance between top plantar surface and bottom
-- `scan_preprocess.outline_margin_mm`: Boundary margin expanded from the plantar outline, adapting to different foot widths and arch concavity
+- `scan_preprocess.outline_margin_mm`: Equidistant outward offset of the outline. The scan blank has a flat bottom and a top that follows the scan
+- `scan_preprocess.max_relief_mm`: Defaults to `8.0`. Limits top-surface rise above the lowest point. The prepare report includes the thickness range
 - `scan_preprocess.max_gap_mm`: Filters triangles spanning gaps too large across the scan
 - `scan_preprocess.min_foot_length_mm` / `max_foot_length_mm`: Quality check thresholds for unit or foot length anomalies
 
@@ -376,6 +379,7 @@ For scan inputs, also check `output/prepared/*_prepare_report.json` to confirm:
 
 - `foot_length_mm` and `foot_width_mm` match the actual foot
 - `watertight` and `is_volume` are `true`
+- The thickness range is plausible: flat bottom, top follows the scan, and rise above the lowest point stays within `scan_preprocess.max_relief_mm` (default `8.0`)
 - No unit, length, or blank generation anomalies in `warnings`
 
 Recommended scan coordinate convention: foot width = X, foot length = Y, sole height/insole thickness = Z. If your app outputs different coordinates, explicitly specify via `scan_preprocess.*_axis` and `long_axis` rather than relying on `auto` guessing.

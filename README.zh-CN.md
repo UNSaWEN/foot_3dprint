@@ -68,6 +68,8 @@
 ```
 
 - 此模式下 `prepare_inputs.py` 会将开放曲面封闭为可打印的鞋垫坯体
+- 轮廓按 `outline_margin_mm` 等距外扩；底面为平底，顶面跟随扫描
+- `scan_preprocess.max_relief_mm` 默认 `8.0`，限制相对最低点的拱起；准备报告里有厚度范围
 - **必须配置** `scan_preprocess` 坐标轴参数，确保与 App 导出坐标系一致
 - 推荐坐标约定：脚宽为 X、脚长为 Y、足底高度/鞋垫厚度为 Z
 
@@ -190,7 +192,7 @@ python scripts/export_bambu_project_3mf.py
 - `left_prepare_report.json`
 - `right_prepare_report.json`
 
-当输入为 `plantar_scan_surface` 时，这一步会把开放脚底曲面生成可体素填充的封闭鞋垫坯体。当输入为旧的 `insole_solid` 时，会复用原始封闭 STL 并只输出准备报告。
+当输入为 `plantar_scan_surface` 时，这一步会把开放脚底曲面生成可体素填充的封闭鞋垫坯体：轮廓按 `outline_margin_mm` 等距外扩，底面为平底，顶面跟随扫描，相对最低点的拱起受 `scan_preprocess.max_relief_mm`（默认 `8.0`）限制。准备报告里有厚度范围。当输入为旧的 `insole_solid` 时，会复用原始封闭 STL 并只输出准备报告。
 
 ### 2. 分区预览
 
@@ -330,7 +332,8 @@ python scripts/export_bambu_project_3mf.py
 - `scan_preprocess.surface_direction`：足底表面高度沿该轴的正向或负向
 - `scan_preprocess.target_thickness_mm`：生成鞋垫坯体的基础厚度
 - `scan_preprocess.bottom_clearance_mm`：顶面足底曲面与底面之间额外留量
-- `scan_preprocess.outline_margin_mm`：按脚底轮廓外扩的边界余量，用于适配不同脚宽和足弓内凹
+- `scan_preprocess.outline_margin_mm`：轮廓等距外扩的距离。直扫坯体底面为平底，顶面跟随扫描
+- `scan_preprocess.max_relief_mm`：默认 `8.0`，限制顶面相对最低点的拱起。准备报告里有厚度范围
 - `scan_preprocess.max_gap_mm`：用于过滤跨越扫描缺口的过大三角面
 - `scan_preprocess.min_foot_length_mm` / `max_foot_length_mm`：单位或足长异常的质量检查阈值
 
@@ -373,6 +376,7 @@ python scripts/export_bambu_project_3mf.py
 
 - `foot_length_mm` 和 `foot_width_mm` 与真人脚型一致
 - `watertight` 和 `is_volume` 为 `true`
+- 厚度范围符合预期：平底，顶面跟随扫描，相对最低点的拱起不超过 `scan_preprocess.max_relief_mm`（默认 `8.0`）
 - `warnings` 中没有单位、长度或生成坯体异常
 
 推荐直扫坐标约定是：脚宽为 X、脚长为 Y、足底高度/鞋垫厚度为 Z。若 App 输出坐标不同，优先通过 `scan_preprocess.*_axis` 和 `long_axis` 显式指定，不要依赖 `auto` 猜测。
