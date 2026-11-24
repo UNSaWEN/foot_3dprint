@@ -36,7 +36,7 @@
 ```
 
 - 来源：3D 扫描 App（如 Polycam、Scaniverse 等）导出的脚底曲面
-- 预处理：`prepare_inputs.py` 会将开放曲面封闭为可打印的鞋垫坯体
+- 预处理：`prepare_inputs.py` 会将开放曲面封闭为可打印的鞋垫坯体。轮廓按 `outline_margin_mm` 等距外扩，底面为平底，顶面跟随扫描，相对最低点的拱起默认不超过 `scan_preprocess.max_relief_mm`（`8.0`）
 - 注意：需要确认 `scan_preprocess.*` 坐标轴参数与 App 输出一致
 
 ## 本地文件

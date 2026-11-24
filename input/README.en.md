@@ -36,7 +36,7 @@ If you scanned the sole of your foot using an iPhone/FaceID-like app:
 ```
 
 - Source: 3D scanning apps (e.g., Polycam, Scaniverse) exporting plantar surface
-- Preprocessing: `prepare_inputs.py` closes the open surface into a printable insole blank
+- Preprocessing: `prepare_inputs.py` closes the open surface into a printable insole blank. The outline is offset by `outline_margin_mm`, the bottom stays flat, the top follows the scan, and rise above the lowest point defaults to at most `scan_preprocess.max_relief_mm` (`8.0`)
 - Note: You must confirm `scan_preprocess.*` axis parameters match the app's coordinate system
 
 ## Local File Names

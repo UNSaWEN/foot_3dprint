@@ -296,18 +296,18 @@ python scripts/export_bambu_project_3mf.py
 
 ### 默认切片建议
 
-当前默认建议为：
+当前默认模板 `healthy_asian_male_mixed` 的填充建议如下。只有主体写墙数，分区 modifier 不写局部墙，墙数继承主体：
 
 - `base`：`gyroid 20%`，`3` 墙
-- `innerHeel`：`gyroid 24%`，`3` 墙
-- `outerHeel`：`gyroid 20%`，`3` 墙
-- `innerArch`：`gyroid 34%`，`4` 墙
-- `outerArch`：`gyroid 26%`，`3` 墙
-- `innerForefoot`：`gyroid 22%`，`3` 墙
-- `centralForefoot`：`gyroid 22%`，`3` 墙
-- `outerForefoot`：`gyroid 17%`，`2` 墙
-- `toe`：`gyroid 13%`，`2` 墙
-- `edgeFrame`：`grid 70%`，`4` 墙
+- `innerHeel`：`gyroid 24%`
+- `outerHeel`：`gyroid 20%`
+- `innerArch`：`gyroid 34%`
+- `outerArch`：`gyroid 26%`
+- `innerForefoot`：`gyroid 22%`
+- `centralForefoot`：`gyroid 22%`
+- `outerForefoot`：`gyroid 17%`
+- `toe`：`gyroid 13%`
+- `edgeFrame`：`grid 70%`
 
 ### 可切换模板
 

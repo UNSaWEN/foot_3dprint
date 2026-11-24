@@ -299,18 +299,18 @@ The current version further subdivides longitudinal zones into:
 
 ### Default Slicing Suggestions
 
-Current default suggestions:
+The default profile `healthy_asian_male_mixed` uses the infill below. Only the base model writes a wall count. Zone modifiers do not write local walls, so they inherit the base walls:
 
 - `base`: `gyroid 20%`, `3` walls
-- `innerHeel`: `gyroid 24%`, `3` walls
-- `outerHeel`: `gyroid 20%`, `3` walls
-- `innerArch`: `gyroid 34%`, `4` walls
-- `outerArch`: `gyroid 26%`, `3` walls
-- `innerForefoot`: `gyroid 22%`, `3` walls
-- `centralForefoot`: `gyroid 22%`, `3` walls
-- `outerForefoot`: `gyroid 17%`, `2` walls
-- `toe`: `gyroid 13%`, `2` walls
-- `edgeFrame`: `grid 70%`, `4` walls
+- `innerHeel`: `gyroid 24%`
+- `outerHeel`: `gyroid 20%`
+- `innerArch`: `gyroid 34%`
+- `outerArch`: `gyroid 26%`
+- `innerForefoot`: `gyroid 22%`
+- `centralForefoot`: `gyroid 22%`
+- `outerForefoot`: `gyroid 17%`
+- `toe`: `gyroid 13%`
+- `edgeFrame`: `grid 70%`
 
 ### Switchable Profiles
 

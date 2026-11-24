@@ -14,6 +14,7 @@
 - 将右脚扫描放为 `input/right_plantar_scan.stl`
 - 在 `config/zone_params.json` 中将对应输入设为 `mode: "plantar_scan_surface"`
 - 确认 `scan_preprocess.length_axis`、`lateral_axis`、`surface_axis` 和 `long_axis` 与 App 导出的坐标一致
+- 轮廓会按 `outline_margin_mm` 等距外扩。底面为平底，顶面跟随扫描，相对最低点的拱起默认不超过 `scan_preprocess.max_relief_mm`（`8.0`）
 
 示例：
 
