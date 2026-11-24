@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -11,7 +11,11 @@ SCRIPTS_DIR = ROOT / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-from export_bambu_project_3mf import build_model_settings_xml, patch_project_settings  # type: ignore
+from export_bambu_project_3mf import (  # type: ignore
+    build_model_settings_xml,
+    patch_project_settings,
+    resolve_template_path,
+)
 from export_zoned_3mf import build_zone_settings  # type: ignore
 
 
@@ -64,6 +68,55 @@ class BambuProject3mfTests(unittest.TestCase):
         self.assertEqual(patched["wall_loops"], "3")
         self.assertEqual(patched["top_shell_layers"], "4")
         self.assertEqual(patched["bottom_shell_layers"], "4")
+
+    def test_patch_project_settings_writes_existing_nozzle_without_adding_keys(self) -> None:
+        settings = build_zone_settings()
+        preset = {
+            "nozzle_diameter_mm": 0.4,
+            "material": "TPU 95A",
+            "layer_height_mm": 0.2,
+            "notes": "已用 0.4 mm 喷嘴和 TPU 95A 试穿，分区 modifier 不写局部墙。",
+        }
+        payload = {
+            "sparse_infill_pattern": "grid",
+            "sparse_infill_density": "15%",
+            "wall_loops": "2",
+            "top_shell_layers": "3",
+            "bottom_shell_layers": "3",
+            "nozzle_diameter": ["0.2", "0.6"],
+            "filament_type": ["PLA", "PETG"],
+            "layer_height": "0.16",
+        }
+
+        patched = patch_project_settings(payload, settings, print_preset=preset)
+
+        self.assertEqual(patched["nozzle_diameter"], ["0.4", "0.4"])
+        self.assertEqual(patched["filament_type"], ["TPU", "TPU"])
+        self.assertEqual(patched["layer_height"], "0.2")
+        self.assertEqual(patched["sparse_infill_pattern"], "gyroid")
+        self.assertEqual(patched["sparse_infill_density"], "20%")
+        self.assertEqual(patched["wall_loops"], "3")
+
+        missing = {
+            "sparse_infill_pattern": "grid",
+            "sparse_infill_density": "15%",
+            "wall_loops": "2",
+            "top_shell_layers": "3",
+            "bottom_shell_layers": "3",
+        }
+        patched_missing = patch_project_settings(missing, settings, print_preset=preset)
+
+        self.assertNotIn("nozzle_diameter", patched_missing)
+        self.assertNotIn("filament_type", patched_missing)
+        self.assertNotIn("layer_height", patched_missing)
+        self.assertEqual(patched_missing["sparse_infill_density"], "20%")
+
+    def test_missing_template_still_raises_file_not_found(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            with self.assertRaises(FileNotFoundError) as caught:
+                resolve_template_path(None, Path(folder))
+
+        self.assertIn("No valid BambuStudio template 3mf found.", str(caught.exception))
 
 
 if __name__ == "__main__":

@@ -17,49 +17,40 @@ from generate_tpms import apply_top_density_boost  # type: ignore
 
 
 class SurfaceStrategyTests(unittest.TestCase):
-    def test_surface_layer_mask_reserves_bottom_and_top_bands(self) -> None:
-        points = np.array(
-            [
-                [0.0, 0.0, 0.0],
-                [0.0, 0.0, 1.9],
-                [0.0, 0.0, 2.1],
-                [0.0, 0.0, 4.1],
-                [0.0, 0.0, 6.0],
-            ],
-            dtype=float,
-        )
-        bounds = np.array([[0.0, 0.0, 0.0], [10.0, 10.0, 6.0]], dtype=float)
+    def test_surface_layer_mask_follows_local_column_surfaces(self) -> None:
+        inside = np.zeros((1, 2, 8), dtype=bool)
+        inside[0, 0, 1:4] = True
+        inside[0, 1, 5:8] = True
 
-        bottom_mask = surface_layer_mask(points, bounds, pitch_mm=2.0, layers=1, surface="bottom")
-        top_mask = surface_layer_mask(points, bounds, pitch_mm=2.0, layers=1, surface="top")
+        bottom = surface_layer_mask(inside, layers=1, surface="bottom")
+        top = surface_layer_mask(inside, layers=2, surface="top")
 
-        self.assertListEqual(bottom_mask.tolist(), [True, True, False, False, False])
-        self.assertListEqual(top_mask.tolist(), [False, False, False, True, True])
+        self.assertTrue(bottom[0, 0, 1])
+        self.assertFalse(bottom[0, 0, 2])
+        self.assertTrue(bottom[0, 1, 5])
+        self.assertFalse(bottom[0, 1, 6])
+        self.assertListEqual(np.flatnonzero(top[0, 0]).tolist(), [2, 3])
+        self.assertListEqual(np.flatnonzero(top[0, 1]).tolist(), [6, 7])
+        self.assertFalse(bool(top[0, 0, 7]))
 
-    def test_apply_top_density_boost_only_changes_top_band(self) -> None:
-        points = np.array(
-            [
-                [0.0, 0.0, 0.0],
-                [0.0, 0.0, 1.0],
-                [0.0, 0.0, 3.9],
-                [0.0, 0.0, 4.1],
-                [0.0, 0.0, 6.0],
-            ],
-            dtype=float,
-        )
-        bounds = np.array([[0.0, 0.0, 0.0], [10.0, 10.0, 6.0]], dtype=float)
-        thresholds = np.array([0.12, 0.12, 0.12, 0.12, 0.12], dtype=float)
+    def test_apply_top_density_boost_follows_local_top(self) -> None:
+        inside = np.zeros((1, 2, 6), dtype=bool)
+        inside[0, 0, 0:3] = True
+        inside[0, 1, 4:6] = True
+        thresholds = np.full(inside.size, 0.12, dtype=float)
 
         boosted = apply_top_density_boost(
             thresholds=thresholds,
-            points=points,
-            bounds=bounds,
-            pitch_mm=2.0,
+            inside_mask=inside,
             top_dense_layers=1,
             threshold_boost=0.08,
-        )
+        ).reshape(inside.shape)
 
-        self.assertListEqual(boosted.round(4).tolist(), [0.12, 0.12, 0.12, 0.2, 0.2])
+        self.assertAlmostEqual(float(boosted[0, 0, 2]), 0.20)
+        self.assertAlmostEqual(float(boosted[0, 0, 1]), 0.12)
+        self.assertAlmostEqual(float(boosted[0, 1, 5]), 0.20)
+        self.assertAlmostEqual(float(boosted[0, 1, 4]), 0.12)
+        self.assertAlmostEqual(float(boosted[0, 0, 5]), 0.12)
 
 
 if __name__ == "__main__":

@@ -175,7 +175,14 @@ def compute_zone_boundaries(
     bounds_max: Iterable[float],
     zone_ratios: dict[str, float],
     axis_index: int,
+    heel_at: str = "min",
 ) -> dict[str, dict[str, float]]:
+    """Split the long axis from heel toward the toes.
+
+    ``heel_at="min"`` puts the heel at the small coordinate. ``heel_at="max"``
+    puts it at the large coordinate, and the same ratios still run
+    heel, arch, forefoot, toe.
+    """
     normalized = normalize_zone_ratios(zone_ratios)
     minimum = list(bounds_min)[axis_index]
     maximum = list(bounds_max)[axis_index]
@@ -183,17 +190,26 @@ def compute_zone_boundaries(
     if length <= 0:
         raise ValueError("Mesh has a non-positive length on the selected long axis")
 
-    cursor = minimum
+    direction = str(heel_at)
+    if direction not in {"min", "max"}:
+        raise ValueError("heel_at must be min or max when computing zone boundaries")
+
+    cursor = minimum if direction == "min" else maximum
     boundaries: dict[str, dict[str, float]] = {}
     for zone_name in LONGITUDINAL_ZONE_ORDER:
         width = length * normalized[zone_name]
-        zone_min = cursor
-        zone_max = maximum if zone_name == LONGITUDINAL_ZONE_ORDER[-1] else cursor + width
+        if direction == "min":
+            zone_min = cursor
+            zone_max = maximum if zone_name == LONGITUDINAL_ZONE_ORDER[-1] else cursor + width
+            cursor = zone_max
+        else:
+            zone_max = cursor
+            zone_min = minimum if zone_name == LONGITUDINAL_ZONE_ORDER[-1] else cursor - width
+            cursor = zone_min
         boundaries[zone_name] = {
             "min_mm": round(zone_min, 4),
             "max_mm": round(zone_max, 4),
         }
-        cursor = zone_max
     return boundaries
 
 
@@ -357,6 +373,9 @@ def validate_config(config: dict[str, Any]) -> None:
     inner_side = str(zone_shape.get("inner_side", "auto"))
     if inner_side not in {"auto", "min", "max"}:
         raise ValueError("zone_shape inner_side must be one of: auto, min, max")
+    heel_at = str(zone_shape.get("heel_at", "auto"))
+    if heel_at not in {"auto", "min", "max"}:
+        raise ValueError("zone_shape heel_at must be one of: auto, min, max")
     forefoot_center_width_ratio = float(zone_shape.get("forefoot_center_width_ratio", 0.28))
     if not math.isfinite(forefoot_center_width_ratio) or not (0.0 < forefoot_center_width_ratio < 1.0):
         raise ValueError("zone_shape forefoot_center_width_ratio must be between 0 and 1")
@@ -404,4 +423,17 @@ def validate_config(config: dict[str, Any]) -> None:
     top_dense_threshold_boost = float(surface.get("top_dense_threshold_boost", 0.0))
     if not math.isfinite(top_dense_threshold_boost) or top_dense_threshold_boost < 0:
         raise ValueError("surface top_dense_threshold_boost must be a non-negative finite number")
+
+    print_preset = config.get("print_preset")
+    if print_preset is not None:
+        if not isinstance(print_preset, dict):
+            raise ValueError("print_preset must be an object")
+        nozzle_diameter = float(print_preset.get("nozzle_diameter_mm", 0.4))
+        layer_height = float(print_preset.get("layer_height_mm", 0.2))
+        if not math.isfinite(nozzle_diameter) or nozzle_diameter <= 0:
+            raise ValueError("print_preset nozzle_diameter_mm must be a positive finite number")
+        if not math.isfinite(layer_height) or layer_height <= 0:
+            raise ValueError("print_preset layer_height_mm must be a positive finite number")
+        if not str(print_preset.get("material", "")).strip():
+            raise ValueError("print_preset material must be a non-empty string")
 

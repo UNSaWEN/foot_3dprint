@@ -3,10 +3,11 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from common import AXES, discover_inputs, load_config, output_root, read_json, try_load_trimesh, write_json
+from common import discover_inputs, load_config, output_root, read_json, write_json
 from default_profiles import resolve_tpms_thresholds
 from render_preview import save_slice_preview
-from zone_strategy import label_zone_points, resolve_curve_config
+from voxel_fields import as_transform_matrix, load_closed_mesh, local_surface_mask, voxel_zone_labels
+from zone_strategy import resolve_curve_config
 
 
 def build_argument_parser() -> argparse.ArgumentParser:
@@ -34,40 +35,64 @@ def threshold_map_from_labels(labels, thresholds):
     return result
 
 
-def edge_frame_mask(points, bounds, margin_mm):
+def blend_zone_thresholds(labels, zone_thresholds, inside_mask, pitch, transition_mm):
+    """Blend hard zone thresholds where a different zone is within ``transition_mm``.
+
+    ``transition_mm == 0`` keeps the hard assignment. Inside the band the value
+    is a distance-weighted mix of the two neighboring thresholds.
+    """
+    import numpy as np  # type: ignore
+    from scipy import ndimage  # type: ignore
+
+    labels = np.asarray(labels)
+    inside = np.asarray(inside_mask, dtype=bool)
+    hard = threshold_map_from_labels(labels.reshape(-1), zone_thresholds)
+    transition = float(transition_mm)
+    if transition <= 0.0:
+        return hard
+
+    shape = inside.shape
+    labels_3d = labels.reshape(shape)
+    present = [str(name) for name in np.unique(labels_3d[inside])]
+    if len(present) < 2:
+        return hard
+
+    distances = []
+    for name in present:
+        zone_mask = inside & (labels_3d == name)
+        distances.append(ndimage.distance_transform_edt(~zone_mask) * float(pitch))
+    distance_stack = np.stack(distances, axis=0)
+
+    own_index = np.zeros(shape, dtype=np.int32)
+    for index, name in enumerate(present):
+        own_index[labels_3d == name] = index
+
+    other_distances = distance_stack.copy()
+    grid = np.indices(shape)
+    other_distances[own_index, grid[0], grid[1], grid[2]] = np.inf
+    nearest_distance = np.min(other_distances, axis=0)
+    nearest_index = np.argmin(other_distances, axis=0)
+
+    hard_3d = hard.reshape(shape)
+    other_threshold = np.array([float(zone_thresholds[name]) for name in present], dtype=float)[nearest_index]
+    own_weight = 0.5 + 0.5 * np.clip(nearest_distance / transition, 0.0, 1.0)
+    blended = own_weight * hard_3d + (1.0 - own_weight) * other_threshold
+    use_blend = inside & np.isfinite(nearest_distance) & (nearest_distance <= transition)
+    return np.where(use_blend, blended, hard_3d).reshape(-1)
+
+
+def apply_top_density_boost(thresholds, inside_mask, top_dense_layers, threshold_boost):
     import numpy as np  # type: ignore
 
-    minimum = bounds[0]
-    maximum = bounds[1]
-    near_x = (points[:, 0] - minimum[0] <= margin_mm) | (maximum[0] - points[:, 0] <= margin_mm)
-    near_y = (points[:, 1] - minimum[1] <= margin_mm) | (maximum[1] - points[:, 1] <= margin_mm)
-    return near_x | near_y
+    values = np.array(thresholds, dtype=float, copy=True).reshape(-1)
+    if int(top_dense_layers) <= 0 or float(threshold_boost) <= 0.0:
+        return values
 
-
-def apply_top_density_boost(thresholds, points, bounds, pitch_mm, top_dense_layers, threshold_boost):
-    import numpy as np  # type: ignore
-
-    if top_dense_layers <= 0 or threshold_boost <= 0:
-        return thresholds
-
-    depth_mm = float(top_dense_layers) * float(pitch_mm)
-    top_limit = float(bounds[1][2]) - depth_mm
-    boosted = thresholds.copy()
-    top_mask = points[:, 2] >= top_limit
-    boosted[top_mask] = boosted[top_mask] + float(threshold_boost)
-    return boosted
-
-
-def voxel_points(voxelized):
-    import numpy as np  # type: ignore
-    import trimesh  # type: ignore
-
-    shape = voxelized.matrix.shape
-    indices = np.indices(shape).reshape(3, -1).T
-    transform = voxelized.transform
-    matrix = transform.matrix if hasattr(transform, "matrix") else transform
-    points = trimesh.transform_points(indices.astype(float), matrix)
-    return indices, points
+    top_mask = local_surface_mask(inside_mask, int(top_dense_layers), "top").reshape(-1)
+    if top_mask.shape != values.shape:
+        raise ValueError("thresholds must have one value per voxel")
+    values[top_mask] = values[top_mask] + float(threshold_boost)
+    return values
 
 
 def main() -> None:
@@ -75,9 +100,6 @@ def main() -> None:
     args = parser.parse_args()
 
     config = load_config(args.config)
-    trimesh = try_load_trimesh()
-    if trimesh is None:
-        raise RuntimeError("generate_tpms.py requires trimesh")
 
     import numpy as np  # type: ignore
 
@@ -87,6 +109,7 @@ def main() -> None:
     thresholds = resolve_tpms_thresholds(config)
     edge_margin = float(config["edge_frame_margin_mm"])
     max_voxels = int(config.get("max_voxels", 1500000))
+    transition_mm = float(config["tpms"]["transition_mm"])
     surface = dict(config.get("surface", {}))
     top_dense_layers = int(surface.get("top_dense_layers", 0))
     top_dense_threshold_boost = float(surface.get("top_dense_threshold_boost", 0.0))
@@ -98,46 +121,40 @@ def main() -> None:
         if not Path(zone_path).exists():
             raise FileNotFoundError(f"Zone definition missing: {zone_path}")
         zones = read_json(zone_path)
-        mesh = trimesh.load_mesh(item["path"], process=False)
-        if isinstance(mesh, trimesh.Scene):
-            mesh = trimesh.util.concatenate(tuple(mesh.geometry.values()))
-
-        filled = mesh.voxelized(pitch).fill()
-        inside_mask = filled.matrix.astype(bool)
-        if int(np.prod(inside_mask.shape)) > max_voxels:
-            raise RuntimeError(
-                f"Voxel grid too large for current limits: {inside_mask.shape} > {max_voxels} voxels"
-            )
-        _, points = voxel_points(filled)
-
-        axis_index = AXES.index(zones["long_axis"])
-        zone_labels = label_zone_points(
-            points=points,
-            axis_index=axis_index,
-            bounds=mesh.bounds,
-            boundaries=zones["boundaries"],
+        mesh = load_closed_mesh(item["path"])
+        curve_config = resolve_curve_config(zones.get("zone_shape", config.get("zone_shape")))
+        voxelized, inside_mask, points, zone_labels = voxel_zone_labels(
+            mesh,
+            zones,
+            pitch=pitch,
             edge_margin=edge_margin,
-            curve_config=resolve_curve_config(zones.get("zone_shape", config.get("zone_shape"))),
+            curve_config=curve_config,
+            max_voxels=max_voxels,
         )
-        local_thresholds = threshold_map_from_labels(zone_labels, thresholds)
-        edge_mask = edge_frame_mask(points, mesh.bounds, edge_margin)
-        local_thresholds[edge_mask] = float(thresholds["edgeFrame"])
+
+        local_thresholds = blend_zone_thresholds(
+            labels=zone_labels,
+            zone_thresholds=thresholds,
+            inside_mask=inside_mask,
+            pitch=pitch,
+            transition_mm=transition_mm,
+        )
         local_thresholds = apply_top_density_boost(
             thresholds=local_thresholds,
-            points=points,
-            bounds=mesh.bounds,
-            pitch_mm=pitch,
+            inside_mask=inside_mask,
             top_dense_layers=top_dense_layers,
             threshold_boost=top_dense_threshold_boost,
         )
         field = gyroid_field(points, wavelength_mm=wavelength)
         tpms_mask = inside_mask.reshape(-1) & (np.abs(field) <= local_thresholds)
+        transform = as_transform_matrix(voxelized)
 
         data = {
             "input_name": item["name"],
             "default_profile": config.get("default_profile"),
             "pitch_mm": pitch,
             "wavelength_mm": wavelength,
+            "transition_mm": transition_mm,
             "grid_shape": list(inside_mask.shape),
             "long_axis": zones["long_axis"],
             "boundaries": zones["boundaries"],
@@ -146,12 +163,7 @@ def main() -> None:
                 "top_dense_layers": top_dense_layers,
                 "top_dense_threshold_boost": top_dense_threshold_boost,
             },
-            "origin_mm": [
-                round(float(value), 6)
-                for value in (
-                    filled.transform.matrix[:3, 3] if hasattr(filled.transform, "matrix") else filled.transform[:3, 3]
-                )
-            ],
+            "origin_mm": [round(float(value), 6) for value in transform[:3, 3]],
         }
         write_json(tpms_dir / f"{item['name']}_tpms.json", data)
 
@@ -160,7 +172,7 @@ def main() -> None:
             inside_mask=inside_mask,
             tpms_mask=tpms_mask.reshape(inside_mask.shape),
             pitch=np.array([pitch], dtype=float),
-            transform=filled.transform.matrix if hasattr(filled.transform, "matrix") else filled.transform,
+            transform=transform,
         )
 
         save_slice_preview(

@@ -208,7 +208,8 @@ Here you can see:
 
 - Insole long axis identification result
 - Macro longitudinal zone boundaries: `heel / arch / forefoot / toe`
-- Curve zone parameters
+- Curve zone parameters, including the heel end selected by `zone_shape.heel_at`
+- `side` written into the zone JSON (from `inputs[].side`)
 - Anatomical zone preview
 
 ### 3. Printable Lattice STL
@@ -220,10 +221,10 @@ Under `output/final/`:
 
 These files already include:
 
-- Outer rim frame
-- Top contact layers
-- Bottom support layers
-- Internal zoned TPMS
+- An `edgeFrame` inset from the plantar projection outline
+- Top and bottom solid layers taken along each column's local surface
+- A full-perimeter shell from `shell.skin_layers` (default `1`; at `0` the sides are only `edgeFrame`)
+- Internal zoned gyroid with thresholds blended by `tpms.transition_mm`
 
 ### 4. Standard Zoned 3MF
 
@@ -265,7 +266,11 @@ Under `output/final/`:
 - `left_engineering_modifiers.3mf`
 - `right_engineering_modifiers.3mf`
 
-These files automatically embed local infill suggestions for each zone, suitable for direct observation and test slicing in Bambu Studio.
+These files write discrete infill density for each zone, suitable for direct observation and test slicing in Bambu Studio. The Bambu engineering `3MF` does not add a transition modifier, and it does not write local walls by default. `tpms.transition_mm` only blends thresholds on the direct lattice STL.
+
+The engineering `3MF` still needs a Bambu template, for example an existing project passed to `export_bambu_project_3mf.py --template`. Export overwrites `nozzle_diameter`, `filament_type`, and `layer_height` only when those keys are already present in the template. If the template cannot be found, export fails and says the template was not found. This path does not generate a complete printer profile from scratch.
+
+The wear-tested combination is recorded in `print_preset`: `0.4 mm` nozzle, `TPU 95A`, and `0.2 mm` layer height.
 
 ## Default Zoning Strategy
 
@@ -287,6 +292,8 @@ The current version further subdivides longitudinal zones into:
 - Forefoot: `innerForefoot` / `centralForefoot` / `outerForefoot`
 - Toe: `toe`
 - Outer rim stabilization: `edgeFrame`
+
+`edgeFrame` is inset from the plantar projection outline by `edge_frame_margin_mm`. It is no longer the four sides of the bounding box. `zone_shape.heel_at` is `auto`, `min`, or `max`. `auto` treats the narrower end of the long axis as the heel; `min` / `max` fix the heel at the lower or higher coordinate end of that axis. `inputs[].side` is written into the zone JSON. `zone_shape.inner_side` remains `auto`, `min`, or `max`.
 
 ### Default Slicing Suggestions
 
@@ -321,7 +328,7 @@ The main parameter tuning entry point is `config/zone_params.json`.
 ### Input Parameters
 
 - `inputs[].mode`: `insole_solid` for existing closed insole STL, `plantar_scan_surface` for open plantar scan STL from iPhone/FaceID-like apps
-- `inputs[].side`: `left / right`, records left/right foot source
+- `inputs[].side`: `left / right`, written into the corresponding zone JSON
 - `inputs[].prepared_path`: Optional; specify closed blank path after preprocessing scan input, defaults to `output/prepared/<name>_prepared_insole.stl`
 - `long_axis`: Length direction for downstream zoning; if scan data has unstable coordinates, explicitly set to `x / y / z`
 
@@ -345,7 +352,8 @@ The main parameter tuning entry point is `config/zone_params.json`.
 - `zone_shape.heel_curve_mm`: Heel boundary forward extension amplitude in the middle
 - `zone_shape.arch_curve_mm`: Arch boundary forward extension amplitude in the middle
 - `zone_shape.toe_curve_mm`: Forefoot-to-toe boundary early convergence amplitude in the middle
-- `zone_shape.inner_side`: `auto / min / max`, determines which side is closer to medial
+- `zone_shape.heel_at`: `auto | min | max`. `auto` treats the narrower end of the long axis as the heel; `min` / `max` fix the lower or higher coordinate end of that axis
+- `zone_shape.inner_side`: Remains `auto | min | max`, and determines which side is closer to medial
 - `zone_shape.forefoot_center_width_ratio`: Central forefoot width ratio
 
 ### Lattice Parameters
@@ -353,14 +361,22 @@ The main parameter tuning entry point is `config/zone_params.json`.
 - `voxel_pitch_mm`: Voxel resolution, currently defaults to `1.0 mm`
 - `tpms.wavelength_mm`: Gyroid wavelength
 - `tpms.threshold_overrides`: Local overrides for TPMS thresholds in the current template
-- `edge_frame_margin_mm`: Rim thickness
+- `tpms.transition_mm`: Affects threshold blending on the direct lattice STL only. The Bambu `3MF` stays on discrete zone densities, adds no transition modifier, and does not write local walls by default
+- `edge_frame_margin_mm`: Inset distance of `edgeFrame` from the plantar projection outline, not the four sides of the bounding box
 
 ### Surface and Slicer-Friendly Parameters
 
-- `surface.bottom_solid_layers`: Number of continuous bottom support layers
-- `surface.top_skin_layers`: Number of continuous top contact layers
+- `surface.bottom_solid_layers`: Bottom solid layer count. On the lattice STL these layers follow each column's local bottom surface
+- `surface.top_skin_layers`: Top solid layer count. On the lattice STL these layers follow each column's local top surface
 - `surface.top_dense_layers`: Number of top dense reinforcement layers
 - `surface.top_dense_threshold_boost`: Extra threshold for top dense layers
+- `shell.skin_layers`: Full-perimeter shell layer count, default `1`. At `0`, the sides are only `edgeFrame`
+
+### Print Preset
+
+`print_preset` in `config/zone_params.json` is the combination already worn and tested: `0.4 mm` nozzle, `TPU 95A`, and `0.2 mm` layer height.
+
+The engineering `3MF` still needs a Bambu template. Export overwrites `nozzle_diameter`, `filament_type`, and `layer_height` only when those keys already exist in the template. If the template cannot be found, export fails and says the template was not found. It does not generate a complete printer profile from scratch.
 
 ## Suggested Workflow
 
@@ -387,6 +403,8 @@ Check `output/zones/*.png`, focusing on:
 - Whether the arch support zone lands where you want it lifted
 - Whether the forefoot tri-zones are too wide or narrow
 - Whether the heel medial/lateral zones are too aggressive
+- Whether `edgeFrame` is inset along the plantar projection outline rather than the bounding-box sides
+- Whether the heel sits at the end selected by `heel_at`; with `auto` it should be the narrower end of the long axis
 
 ### C. Slicer Readability
 
@@ -419,7 +437,7 @@ If the foot feel is not right, prioritize adjusting:
 ## Parameter Tuning Tips
 
 - Quick style swap: Switch `default_profile` first
-- Approximate gradient with fewer walls in transition zones: Enable lower local walls for a few zones via `zone_settings_overrides` only, rather than enabling globally
+- Zone transition on the direct lattice STL is a threshold blend controlled by `tpms.transition_mm`. The Bambu engineering `3MF` keeps discrete zone densities, adds no transition modifier, and does not write local walls by default
 - Smoother boundaries: Lower `voxel_pitch_mm`
 - More arch support: Raise `innerArch`
 - Softer forefoot: Lower `innerForefoot`, `centralForefoot`, `outerForefoot`
@@ -445,11 +463,9 @@ Current test coverage:
 ## Limitations and Notes
 
 - Default parameters are engineering starting points, not a substitute for clinical prescriptions or personalized medical advice
-- Engineering `3MF` currently targets Bambu Studio-style templates; other slicers may require template field adaptation
+- The engineering `3MF` needs an existing Bambu template and does not generate a complete printer profile from scratch. Only `nozzle_diameter`, `filament_type`, and `layer_height` that already exist in the template are overwritten from `print_preset` (`0.4 mm` nozzle, `TPU 95A`, `0.2 mm` layer height). If the template cannot be found, export fails and says the template was not found. Other slicers may still need their own template fields adapted
 - Default thresholds and densities lean toward daily support/cushioning scenarios; sports scenarios typically require re-tuning
 
 ## Future Improvements
 
 - Add example zone preview screenshots
-- Source and adaptation notes for template `3MF`
-- A set of default print material and slicer parameter references

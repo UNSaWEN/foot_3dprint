@@ -6,9 +6,10 @@ from pathlib import Path
 
 import numpy as np
 
-from common import AXES, discover_inputs, ensure_directory, load_config, output_root, read_json, try_load_trimesh
+from common import discover_inputs, ensure_directory, load_config, output_root, read_json, try_load_trimesh
 from default_profiles import resolve_zone_settings
-from zone_strategy import label_zone_points, resolve_curve_config
+from voxel_fields import load_closed_mesh, mesh_from_voxel_mask, voxel_zone_labels
+from zone_strategy import resolve_curve_config
 
 
 ZONE_ORDER = (
@@ -29,15 +30,6 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--config", default=None, help="Path to config JSON.")
     return parser
 
-def voxel_points(voxelized):
-    import trimesh  # type: ignore
-
-    indices = np.indices(voxelized.matrix.shape).reshape(3, -1).T
-    transform = voxelized.transform.matrix if hasattr(voxelized.transform, "matrix") else voxelized.transform
-    points = trimesh.transform_points(indices.astype(float), transform)
-    return points
-
-
 def build_zone_settings(config: dict[str, object] | None = None) -> dict[str, dict[str, object]]:
     return resolve_zone_settings(config)
 
@@ -48,6 +40,38 @@ def export_scene_3mf(scene, output_path: Path) -> None:
         output_path.write_text(exported, encoding="utf-8")
     else:
         output_path.write_bytes(exported)
+
+
+def build_zoned_scene(mesh, zones: dict, config: dict, foot_name: str):
+    """Label one closed blank and return modifier meshes in the blank's world frame."""
+    trimesh = try_load_trimesh()
+    if trimesh is None:
+        raise RuntimeError("export_zoned_3mf.py requires trimesh")
+
+    pitch = float(config["voxel_pitch_mm"])
+    edge_margin = float(config["edge_frame_margin_mm"])
+    curve_config = resolve_curve_config(zones.get("zone_shape", config.get("zone_shape")))
+    _voxelized, inside_mask, _points, labels = voxel_zone_labels(
+        mesh,
+        zones,
+        pitch=pitch,
+        edge_margin=edge_margin,
+        curve_config=curve_config,
+    )
+    labels = labels.reshape(inside_mask.shape)
+
+    scene = trimesh.Scene()
+    scene.add_geometry(mesh.copy(), geom_name=f"{foot_name}_base")
+    exported_zones: list[str] = []
+    for zone_name in ZONE_ORDER:
+        zone_mask = inside_mask & (labels == zone_name)
+        if not np.any(zone_mask):
+            continue
+        zone_mesh = mesh_from_voxel_mask(zone_mask, _voxelized)
+        zone_mesh.process(validate=True)
+        scene.add_geometry(zone_mesh, geom_name=f"{foot_name}_{zone_name}")
+        exported_zones.append(zone_name)
+    return scene, exported_zones
 
 
 def write_recommendation_markdown(path: Path, foot_name: str, settings: dict[str, dict[str, object]]) -> None:
@@ -95,15 +119,10 @@ def main() -> None:
     args = parser.parse_args()
 
     config = load_config(args.config)
-    trimesh = try_load_trimesh()
-    if trimesh is None:
+    if try_load_trimesh() is None:
         raise RuntimeError("export_zoned_3mf.py requires trimesh")
 
-    from trimesh.voxel.ops import matrix_to_marching_cubes  # type: ignore
-
     final_dir = ensure_directory(output_root(config) / "final")
-    pitch = float(config["voxel_pitch_mm"])
-    edge_margin = float(config["edge_frame_margin_mm"])
     settings = build_zone_settings(config)
 
     combined_manifest: dict[str, object] = {"files": []}
@@ -113,37 +132,8 @@ def main() -> None:
         if not Path(zone_path).exists():
             raise FileNotFoundError(f"Zone definition missing: {zone_path}")
         zones = read_json(zone_path)
-
-        mesh = trimesh.load_mesh(item["path"], process=True)
-        if isinstance(mesh, trimesh.Scene):
-            mesh = trimesh.util.concatenate(tuple(mesh.geometry.values()))
-
-        voxelized = mesh.voxelized(pitch).fill()
-        inside_mask = voxelized.matrix.astype(bool)
-        points = voxel_points(voxelized)
-        axis_index = AXES.index(zones["long_axis"])
-        labels = label_zone_points(
-            points=points,
-            axis_index=axis_index,
-            bounds=mesh.bounds,
-            boundaries=zones["boundaries"],
-            edge_margin=edge_margin,
-            curve_config=resolve_curve_config(zones.get("zone_shape", config.get("zone_shape"))),
-        ).reshape(inside_mask.shape)
-
-        scene = trimesh.Scene()
-        scene.add_geometry(mesh.copy(), geom_name=f"{item['name']}_base")
-
-        exported_zones = []
-        for zone_name in ZONE_ORDER:
-            zone_mask = inside_mask & (labels == zone_name)
-            if not np.any(zone_mask):
-                continue
-            zone_mesh = matrix_to_marching_cubes(zone_mask, pitch=pitch)
-            zone_mesh.process(validate=True)
-            scene.add_geometry(zone_mesh, geom_name=f"{item['name']}_{zone_name}")
-            exported_zones.append(zone_name)
-
+        mesh = load_closed_mesh(item["path"])
+        scene, exported_zones = build_zoned_scene(mesh, zones, config, foot_name=item["name"])
         scene.metadata["zone_settings"] = json.dumps(settings, ensure_ascii=False)
         output_path = final_dir / f"{item['name']}_zoned_modifiers.3mf"
         export_scene_3mf(scene, output_path)
