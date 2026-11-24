@@ -34,3 +34,7 @@ Short note:
 
 - These sources are best used to choose a reasonable default zoning strategy and tuning direction.
 - If plantar pressure maps, gait data, or wear-test feedback become available, those individual data sources should override the default settings.
+
+## 5. Boundary of zoned multi-lattice work
+
+Zoned multi-lattice papers from 2026 are aimed mainly at diabetic offloading. For healthy feet, gait-pressure differences between 14%–20% gyroid and honeycomb are not significant, so the default remains a single gyroid plus the existing anatomical zones.

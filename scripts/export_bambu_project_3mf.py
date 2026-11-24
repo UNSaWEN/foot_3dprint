@@ -9,8 +9,9 @@ from pathlib import Path
 from typing import Any
 import xml.etree.ElementTree as ET
 
-from common import discover_inputs, ensure_directory, load_config, output_root
-from export_zoned_3mf import build_zone_settings, export_scene_3mf, label_zone_points, voxel_points
+from common import discover_inputs, ensure_directory, load_config, output_root, read_json
+from export_zoned_3mf import build_zone_settings, build_zoned_scene
+from voxel_fields import load_closed_mesh
 
 
 CORE_NS = "http://schemas.microsoft.com/3dmanufacturing/core/2015/02"
@@ -20,18 +21,6 @@ BAMBU_NS = "http://schemas.bambulab.com/package/2021"
 ET.register_namespace("", CORE_NS)
 ET.register_namespace("p", PROD_NS)
 ET.register_namespace("BambuStudio", BAMBU_NS)
-
-ZONE_ORDER = (
-    "innerHeel",
-    "outerHeel",
-    "innerArch",
-    "outerArch",
-    "innerForefoot",
-    "centralForefoot",
-    "outerForefoot",
-    "toe",
-    "edgeFrame",
-)
 
 
 def build_argument_parser() -> argparse.ArgumentParser:
@@ -45,14 +34,58 @@ def build_argument_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def patch_project_settings(payload: dict[str, Any], settings: dict[str, dict[str, object]]) -> dict[str, Any]:
+def _format_preset_mm(value: object) -> str:
+    number = round(float(value), 4)
+    text = f"{number:.4f}".rstrip("0").rstrip(".")
+    return text if text else "0"
+
+
+def _filament_type_label(material: object) -> str:
+    text = str(material).strip()
+    if "TPU" in text.upper():
+        return "TPU"
+    return text.split()[0] if text else "TPU"
+
+
+def _set_if_present(payload: dict[str, Any], key: str, value: object) -> None:
+    if key in payload:
+        payload[key] = value
+
+
+def _apply_print_preset(payload: dict[str, Any], print_preset: dict[str, Any] | None) -> None:
+    if not print_preset:
+        return
+
+    if "nozzle_diameter" in payload:
+        nozzle = _format_preset_mm(print_preset.get("nozzle_diameter_mm", 0.4))
+        current = payload["nozzle_diameter"]
+        if isinstance(current, list):
+            payload["nozzle_diameter"] = [nozzle for _item in current]
+        elif isinstance(current, (str, int, float)):
+            payload["nozzle_diameter"] = nozzle
+
+    if "filament_type" in payload and isinstance(payload["filament_type"], list):
+        filament = _filament_type_label(print_preset.get("material", "TPU 95A"))
+        payload["filament_type"] = [filament for _item in payload["filament_type"]]
+
+    if "layer_height" in payload:
+        payload["layer_height"] = _format_preset_mm(print_preset.get("layer_height_mm", 0.2))
+
+
+def patch_project_settings(
+    payload: dict[str, Any],
+    settings: dict[str, dict[str, object]],
+    print_preset: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Overwrite template keys that already exist. Missing printer keys are left absent."""
     patched = dict(payload)
     base = settings["base"]
-    patched["sparse_infill_pattern"] = str(base["infill_pattern"])
-    patched["sparse_infill_density"] = f"{int(base['infill_density_percent'])}%"
-    patched["wall_loops"] = str(int(base["walls"]))
-    patched["top_shell_layers"] = str(int(base["top_shell_layers"]))
-    patched["bottom_shell_layers"] = str(int(base["bottom_shell_layers"]))
+    _set_if_present(patched, "sparse_infill_pattern", str(base["infill_pattern"]))
+    _set_if_present(patched, "sparse_infill_density", f"{int(base['infill_density_percent'])}%")
+    _set_if_present(patched, "wall_loops", str(int(base["walls"])))
+    _set_if_present(patched, "top_shell_layers", str(int(base["top_shell_layers"])))
+    _set_if_present(patched, "bottom_shell_layers", str(int(base["bottom_shell_layers"])))
+    _apply_print_preset(patched, print_preset)
     return patched
 
 
@@ -334,43 +367,12 @@ def resolve_template_path(cli_template: str | None, final_dir: Path) -> Path:
 
 
 def build_plain_scene_bytes(config: dict[str, Any], item: dict[str, Any]) -> bytes:
-    trimesh = __import__("trimesh")
-    import numpy as np  # type: ignore
-    from trimesh.voxel.ops import matrix_to_marching_cubes  # type: ignore
-
-    pitch = float(config["voxel_pitch_mm"])
-    edge_margin = float(config["edge_frame_margin_mm"])
     zone_path = output_root(config) / "zones" / f"{item['name']}_zones.json"
     if not zone_path.exists():
         raise FileNotFoundError(f"Zone definition missing: {zone_path}")
-    zones = json.loads(zone_path.read_text(encoding="utf-8"))
-
-    mesh = trimesh.load_mesh(item["path"], process=True)
-    if isinstance(mesh, trimesh.Scene):
-        mesh = trimesh.util.concatenate(tuple(mesh.geometry.values()))
-
-    voxelized = mesh.voxelized(pitch).fill()
-    inside_mask = voxelized.matrix.astype(bool)
-    points = voxel_points(voxelized)
-    axis_index = ("x", "y", "z").index(zones["long_axis"])
-    labels = label_zone_points(
-        points=points,
-        axis_index=axis_index,
-        bounds=mesh.bounds,
-        boundaries=zones["boundaries"],
-        edge_margin=edge_margin,
-        curve_config=zones.get("zone_shape", config.get("zone_shape")),
-    ).reshape(inside_mask.shape)
-
-    scene = trimesh.Scene()
-    scene.add_geometry(mesh.copy(), geom_name=f"{item['name']}_base")
-    for zone_name in ZONE_ORDER:
-        zone_mask = inside_mask & (labels == zone_name)
-        if not np.any(zone_mask):
-            continue
-        zone_mesh = matrix_to_marching_cubes(zone_mask, pitch=pitch)
-        zone_mesh.process(validate=True)
-        scene.add_geometry(zone_mesh, geom_name=f"{item['name']}_{zone_name}")
+    zones = read_json(zone_path)
+    mesh = load_closed_mesh(item["path"])
+    scene, _exported_zones = build_zoned_scene(mesh, zones, config, foot_name=item["name"])
 
     output = BytesIO()
     exported = scene.export(file_type="3mf")
@@ -406,7 +408,11 @@ def main() -> None:
 
         with zipfile.ZipFile(BytesIO(template_bytes), "r") as archive:
             project_settings = json.loads(archive.read("Metadata/project_settings.config").decode("utf-8-sig", errors="ignore"))
-        patched_project_settings = patch_project_settings(project_settings, settings)
+        patched_project_settings = patch_project_settings(
+            project_settings,
+            settings,
+            print_preset=config.get("print_preset"),
+        )
 
         base_info = next(info for info in object_infos if info["zone_name"] == "base")
         replacements = {

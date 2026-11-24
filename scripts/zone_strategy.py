@@ -12,6 +12,7 @@ DEFAULT_CURVE_CONFIG: dict[str, float | bool | str] = {
     "toe_curve_mm": 12.0,
     "center_power": 1.6,
     "inner_side": "auto",
+    "heel_at": "auto",
     "forefoot_center_width_ratio": 0.28,
 }
 
@@ -77,6 +78,77 @@ def inner_outer_coordinates(
     return 1.0 - normalized, inner_side
 
 
+def resolve_heel_at(configured: str, footprint: np.ndarray, long_axis_index: int, pitch: float) -> str:
+    """Pick the heel end. ``auto`` compares end widths and keeps the narrower end."""
+    choice = str(configured or "auto")
+    if choice in {"min", "max"}:
+        return choice
+    if choice != "auto":
+        raise ValueError("zone_shape heel_at must be one of: auto, min, max")
+    if long_axis_index not in {0, 1}:
+        return "min"
+
+    widths = _end_width_profile(np.asarray(footprint, dtype=bool), long_axis_index, float(pitch))
+    occupied = np.flatnonzero(widths > 0.0)
+    if occupied.size == 0:
+        return "min"
+
+    start = int(occupied[0])
+    end = int(occupied[-1])
+    band = max(int(round((end - start + 1) * 0.25)), 1)
+    low_width = float(np.max(widths[start : start + band]))
+    high_width = float(np.max(widths[end - band + 1 : end + 1]))
+    if high_width + float(pitch) < low_width:
+        return "max"
+    return "min"
+
+
+def _end_width_profile(footprint: np.ndarray, long_axis_index: int, pitch: float) -> np.ndarray:
+    lines = footprint if long_axis_index == 0 else footprint.T
+    occupied = lines.any(axis=1)
+    first = lines.argmax(axis=1)
+    last = lines.shape[1] - 1 - lines[:, ::-1].argmax(axis=1)
+    widths = (last - first + 1).astype(float) * pitch
+    return np.where(occupied, widths, 0.0)
+
+
+def _label_heel_direction(curve_config: dict[str, float | bool | str]) -> str:
+    heel_at = str(curve_config.get("heel_at", "min"))
+    if heel_at == "auto":
+        return "min"
+    if heel_at not in {"min", "max"}:
+        raise ValueError("zone_shape heel_at must be one of: auto, min, max")
+    return heel_at
+
+
+def _values_from_heel(values: np.ndarray, bounds: np.ndarray, axis_index: int, heel_at: str) -> np.ndarray:
+    coordinates = np.asarray(values, dtype=float)
+    if heel_at != "max":
+        return coordinates
+    low = float(bounds[0][axis_index])
+    high = float(bounds[1][axis_index])
+    return (low + high) - coordinates
+
+
+def _boundaries_from_heel(
+    boundaries: dict[str, dict[str, float]],
+    bounds: np.ndarray,
+    axis_index: int,
+    heel_at: str,
+) -> dict[str, dict[str, float]]:
+    if heel_at != "max":
+        return boundaries
+    low = float(bounds[0][axis_index])
+    high = float(bounds[1][axis_index])
+    flipped: dict[str, dict[str, float]] = {}
+    for name, span in boundaries.items():
+        flipped[name] = {
+            "min_mm": (low + high) - float(span["max_mm"]),
+            "max_mm": (low + high) - float(span["min_mm"]),
+        }
+    return flipped
+
+
 def label_zone_points(
     points: np.ndarray,
     axis_index: int,
@@ -84,13 +156,21 @@ def label_zone_points(
     boundaries: dict[str, dict[str, float]],
     edge_margin: float,
     curve_config: dict[str, float | bool | str] | None = None,
+    outline_distance_mm: np.ndarray | None = None,
 ) -> np.ndarray:
-    labels = np.full(len(points), "toe", dtype=object)
-    axis_values = points[:, axis_index]
-    near_x = (points[:, 0] - bounds[0][0] <= edge_margin) | (bounds[1][0] - points[:, 0] <= edge_margin)
-    near_y = (points[:, 1] - bounds[0][1] <= edge_margin) | (bounds[1][1] - points[:, 1] <= edge_margin)
+    """Label anatomical zones. The rim follows outline distance, not the bounding box."""
+    if outline_distance_mm is None:
+        raise ValueError("outline_distance_mm is required; edgeFrame follows the foot outline")
 
+    distances = np.asarray(outline_distance_mm, dtype=float)
+    if distances.shape != (len(points),):
+        raise ValueError("outline_distance_mm must have one value per point")
+
+    labels = np.full(len(points), "toe", dtype=object)
     merged_curve = resolve_curve_config(curve_config)
+    heel_at = _label_heel_direction(merged_curve)
+    axis_values = _values_from_heel(points[:, axis_index], bounds, axis_index, heel_at)
+    working_boundaries = _boundaries_from_heel(boundaries, bounds, axis_index, heel_at)
     inner_coordinate, _inner_side = inner_outer_coordinates(points, bounds, axis_index, boundaries, merged_curve)
     forefoot_center_width = float(merged_curve["forefoot_center_width_ratio"])
     center_min = max((1.0 - forefoot_center_width) / 2.0, 0.0)
@@ -98,13 +178,13 @@ def label_zone_points(
 
     if bool(merged_curve["enabled"]):
         bias = center_bias(points, bounds, axis_index, merged_curve)
-        heel_max = boundaries["heel"]["max_mm"] + float(merged_curve["heel_curve_mm"]) * bias
-        arch_max = boundaries["arch"]["max_mm"] + float(merged_curve["arch_curve_mm"]) * bias
-        forefoot_max = boundaries["forefoot"]["max_mm"] - float(merged_curve["toe_curve_mm"]) * bias
+        heel_max = working_boundaries["heel"]["max_mm"] + float(merged_curve["heel_curve_mm"]) * bias
+        arch_max = working_boundaries["arch"]["max_mm"] + float(merged_curve["arch_curve_mm"]) * bias
+        forefoot_max = working_boundaries["forefoot"]["max_mm"] - float(merged_curve["toe_curve_mm"]) * bias
     else:
-        heel_max = np.full(len(points), boundaries["heel"]["max_mm"], dtype=float)
-        arch_max = np.full(len(points), boundaries["arch"]["max_mm"], dtype=float)
-        forefoot_max = np.full(len(points), boundaries["forefoot"]["max_mm"], dtype=float)
+        heel_max = np.full(len(points), working_boundaries["heel"]["max_mm"], dtype=float)
+        arch_max = np.full(len(points), working_boundaries["arch"]["max_mm"], dtype=float)
+        forefoot_max = np.full(len(points), working_boundaries["forefoot"]["max_mm"], dtype=float)
 
     heel_mask = axis_values <= heel_max
     arch_mask = (axis_values > heel_max) & (axis_values <= arch_max)
@@ -117,5 +197,5 @@ def label_zone_points(
     labels[forefoot_mask & (inner_coordinate > center_max)] = "innerForefoot"
     labels[forefoot_mask & (inner_coordinate >= center_min) & (inner_coordinate <= center_max)] = "centralForefoot"
     labels[forefoot_mask & (inner_coordinate < center_min)] = "outerForefoot"
-    labels[near_x | near_y] = "edgeFrame"
+    labels[distances <= float(edge_margin)] = "edgeFrame"
     return labels

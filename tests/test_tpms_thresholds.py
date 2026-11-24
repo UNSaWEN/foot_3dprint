@@ -13,7 +13,7 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 from default_profiles import resolve_tpms_thresholds  # type: ignore
-from generate_tpms import threshold_map_from_labels  # type: ignore
+from generate_tpms import blend_zone_thresholds, threshold_map_from_labels  # type: ignore
 
 
 class TpmsThresholdTests(unittest.TestCase):
@@ -82,6 +82,35 @@ class TpmsThresholdTests(unittest.TestCase):
         result = threshold_map_from_labels(labels, thresholds)
 
         self.assertTrue(np.allclose(result, [0.23, 0.18, 0.30, 0.24, 0.22, 0.18, 0.15, 0.10, 0.35]))
+
+    def test_transition_band_blends_neighboring_thresholds(self) -> None:
+        labels = np.array(["arch"] * 5 + ["toe"] * 5, dtype=object).reshape(10, 1, 1)
+        inside = np.ones((10, 1, 1), dtype=bool)
+        thresholds = {"arch": 0.30, "toe": 0.10}
+
+        blended = blend_zone_thresholds(
+            labels=labels,
+            zone_thresholds=thresholds,
+            inside_mask=inside,
+            pitch=1.0,
+            transition_mm=4.0,
+        ).reshape(10, 1, 1)
+        hard = blend_zone_thresholds(
+            labels=labels,
+            zone_thresholds=thresholds,
+            inside_mask=inside,
+            pitch=1.0,
+            transition_mm=0.0,
+        )
+
+        self.assertGreater(float(blended[4, 0, 0]), 0.10)
+        self.assertLess(float(blended[4, 0, 0]), 0.30)
+        self.assertGreater(float(blended[5, 0, 0]), 0.10)
+        self.assertLess(float(blended[5, 0, 0]), 0.30)
+        self.assertAlmostEqual(float(blended[0, 0, 0]), 0.30)
+        self.assertAlmostEqual(float(blended[9, 0, 0]), 0.10)
+        self.assertTrue(np.allclose(hard[:5], 0.30))
+        self.assertTrue(np.allclose(hard[5:], 0.10))
 
 
 if __name__ == "__main__":

@@ -68,6 +68,8 @@
 ```
 
 - 此模式下 `prepare_inputs.py` 会将开放曲面封闭为可打印的鞋垫坯体
+- 轮廓按 `outline_margin_mm` 等距外扩；底面为平底，顶面跟随扫描
+- `scan_preprocess.max_relief_mm` 默认 `8.0`，限制相对最低点的拱起；准备报告里有厚度范围
 - **必须配置** `scan_preprocess` 坐标轴参数，确保与 App 导出坐标系一致
 - 推荐坐标约定：脚宽为 X、脚长为 Y、足底高度/鞋垫厚度为 Z
 
@@ -190,7 +192,7 @@ python scripts/export_bambu_project_3mf.py
 - `left_prepare_report.json`
 - `right_prepare_report.json`
 
-当输入为 `plantar_scan_surface` 时，这一步会把开放脚底曲面生成可体素填充的封闭鞋垫坯体。当输入为旧的 `insole_solid` 时，会复用原始封闭 STL 并只输出准备报告。
+当输入为 `plantar_scan_surface` 时，这一步会把开放脚底曲面生成可体素填充的封闭鞋垫坯体：轮廓按 `outline_margin_mm` 等距外扩，底面为平底，顶面跟随扫描，相对最低点的拱起受 `scan_preprocess.max_relief_mm`（默认 `8.0`）限制。准备报告里有厚度范围。当输入为旧的 `insole_solid` 时，会复用原始封闭 STL 并只输出准备报告。
 
 ### 2. 分区预览
 
@@ -205,7 +207,8 @@ python scripts/export_bambu_project_3mf.py
 
 - 鞋垫长轴识别结果
 - 宏观纵向分区边界：`heel / arch / forefoot / toe`
-- 曲线分区参数
+- 曲线分区参数，以及 `zone_shape.heel_at` 选定的后跟一端
+- 写入分区 JSON 的 `side`（来自 `inputs[].side`）
 - 解剖分区预览
 
 ### 3. 可直接打印的晶格 STL
@@ -217,10 +220,10 @@ python scripts/export_bambu_project_3mf.py
 
 这些文件已经包含：
 
-- 外轮廓边框
-- 顶面接触层
-- 底部承托层
-- 内部分区 TPMS
+- 沿脚底投影轮廓内缩的 `edgeFrame`
+- 沿每一列局部表面取层的顶面和底面实心层
+- 整圈外壳 `shell.skin_layers`（默认 `1`；设为 `0` 时侧面只剩 `edgeFrame`）
+- 按 `tpms.transition_mm` 做阈值混合的内部分区 gyroid
 
 ### 4. 普通分区 3MF
 
@@ -262,7 +265,11 @@ python scripts/export_bambu_project_3mf.py
 - `left_engineering_modifiers.3mf`
 - `right_engineering_modifiers.3mf`
 
-这两个文件会自动写入各分区的局部填充建议，适合直接在 Bambu Studio 中继续观察和试切。
+这两个文件会写入各分区的离散填充密度，适合直接在 Bambu Studio 中继续观察和试切。拓竹工程 `3MF` 不加过渡 modifier，默认也不写局部墙。`tpms.transition_mm` 只影响直出晶格 STL 的阈值混合。
+
+工程 `3MF` 仍然需要一份拓竹模板，例如用 `export_bambu_project_3mf.py --template` 指定已有工程。导出只会覆盖模板里已经存在的 `nozzle_diameter`、`filament_type`、`layer_height`。找不到模板时导出失败，并提示找不到模板。这条路径不会从零生成完整打印机配置。
+
+已经试穿过的组合写在 `print_preset`：喷嘴 `0.4 mm`，材料 `TPU 95A`，层高 `0.2 mm`。
 
 ## 默认分区策略
 
@@ -284,6 +291,8 @@ python scripts/export_bambu_project_3mf.py
 - 前掌：`innerForefoot` / `centralForefoot` / `outerForefoot`
 - 脚趾：`toe`
 - 外轮廓稳固区：`edgeFrame`
+
+`edgeFrame` 沿脚底投影轮廓内缩 `edge_frame_margin_mm`，不再是包围盒四边。`zone_shape.heel_at` 为 `auto`、`min` 或 `max`；`auto` 把长轴较窄的一端当后跟，`min` / `max` 则固定长轴坐标较小或较大的一端。`inputs[].side` 会写入分区 JSON。`zone_shape.inner_side` 仍是 `auto`、`min` 或 `max`。
 
 ### 默认切片建议
 
@@ -318,7 +327,7 @@ python scripts/export_bambu_project_3mf.py
 ### 输入参数
 
 - `inputs[].mode`：`insole_solid` 表示现有封闭鞋垫 STL，`plantar_scan_surface` 表示 iPhone/FaceID 类 App 输出的开放脚底扫描 STL
-- `inputs[].side`：`left / right`，用于记录左右脚来源
+- `inputs[].side`：`left / right`，会写入对应的分区 JSON
 - `inputs[].prepared_path`：可选；指定直扫输入预处理后的封闭坯体路径，默认写入 `output/prepared/<name>_prepared_insole.stl`
 - `long_axis`：下游分区使用的长度方向；直扫数据如果坐标不稳定，建议显式设为 `x / y / z`
 
@@ -330,7 +339,8 @@ python scripts/export_bambu_project_3mf.py
 - `scan_preprocess.surface_direction`：足底表面高度沿该轴的正向或负向
 - `scan_preprocess.target_thickness_mm`：生成鞋垫坯体的基础厚度
 - `scan_preprocess.bottom_clearance_mm`：顶面足底曲面与底面之间额外留量
-- `scan_preprocess.outline_margin_mm`：按脚底轮廓外扩的边界余量，用于适配不同脚宽和足弓内凹
+- `scan_preprocess.outline_margin_mm`：轮廓等距外扩的距离。直扫坯体底面为平底，顶面跟随扫描
+- `scan_preprocess.max_relief_mm`：默认 `8.0`，限制顶面相对最低点的拱起。准备报告里有厚度范围
 - `scan_preprocess.max_gap_mm`：用于过滤跨越扫描缺口的过大三角面
 - `scan_preprocess.min_foot_length_mm` / `max_foot_length_mm`：单位或足长异常的质量检查阈值
 
@@ -342,7 +352,8 @@ python scripts/export_bambu_project_3mf.py
 - `zone_shape.heel_curve_mm`：后跟边界在中部向前延伸的幅度
 - `zone_shape.arch_curve_mm`：足弓边界在中部向前延伸的幅度
 - `zone_shape.toe_curve_mm`：前掌到脚趾边界在中部提前收束的幅度
-- `zone_shape.inner_side`：`auto / min / max`，用于判定哪一侧更接近内侧
+- `zone_shape.heel_at`：`auto | min | max`。`auto` 把长轴较窄的一端当后跟；`min` / `max` 固定长轴坐标较小或较大的一端
+- `zone_shape.inner_side`：仍是 `auto | min | max`，用于判定哪一侧更接近内侧
 - `zone_shape.forefoot_center_width_ratio`：中央前掌占宽度比例
 
 ### 晶格参数
@@ -350,14 +361,22 @@ python scripts/export_bambu_project_3mf.py
 - `voxel_pitch_mm`：体素分辨率，当前默认 `1.0 mm`
 - `tpms.wavelength_mm`：gyroid 波长
 - `tpms.threshold_overrides`：对当前模板中的 TPMS 阈值做局部覆盖
-- `edge_frame_margin_mm`：边框厚度
+- `tpms.transition_mm`：只影响直出晶格 STL 的阈值混合。拓竹 `3MF` 仍是离散分区密度，不加过渡 modifier，默认不写局部墙
+- `edge_frame_margin_mm`：`edgeFrame` 沿脚底投影轮廓内缩的距离，不再是包围盒四边
 
 ### 表皮与切片友好参数
 
-- `surface.bottom_solid_layers`：底部连续承托层层数
-- `surface.top_skin_layers`：顶面连续接触层层数
+- `surface.bottom_solid_layers`：底部实心层层数。晶格 STL 里沿每一列的局部底面取层
+- `surface.top_skin_layers`：顶面实心层层数。晶格 STL 里沿每一列的局部顶面取层
 - `surface.top_dense_layers`：顶面加强层层数
 - `surface.top_dense_threshold_boost`：顶面加强层额外阈值
+- `shell.skin_layers`：整圈外壳层数，默认 `1`。设为 `0` 时侧面只剩 `edgeFrame`
+
+### 打印预设
+
+`config/zone_params.json` 里的 `print_preset` 是已经试穿过的组合：喷嘴 `0.4 mm`，材料 `TPU 95A`，层高 `0.2 mm`。
+
+工程 `3MF` 仍然需要一份拓竹模板。导出时，只有模板里已经存在的 `nozzle_diameter`、`filament_type`、`layer_height` 会被这组值覆盖。找不到模板时导出失败，并提示找不到模板。不会从零生成完整打印机配置。
 
 ## 建议工作流
 
@@ -373,6 +392,7 @@ python scripts/export_bambu_project_3mf.py
 
 - `foot_length_mm` 和 `foot_width_mm` 与真人脚型一致
 - `watertight` 和 `is_volume` 为 `true`
+- 厚度范围符合预期：平底，顶面跟随扫描，相对最低点的拱起不超过 `scan_preprocess.max_relief_mm`（默认 `8.0`）
 - `warnings` 中没有单位、长度或生成坯体异常
 
 推荐直扫坐标约定是：脚宽为 X、脚长为 Y、足底高度/鞋垫厚度为 Z。若 App 输出坐标不同，优先通过 `scan_preprocess.*_axis` 和 `long_axis` 显式指定，不要依赖 `auto` 猜测。
@@ -384,6 +404,8 @@ python scripts/export_bambu_project_3mf.py
 - 足弓支撑区是否落在你希望被托起的位置
 - 前掌三分区是否过宽或过窄
 - 后跟内外侧分区是否太激进
+- `edgeFrame` 是否沿脚底投影轮廓内缩，而不是包围盒四边
+- 后跟是否在 `heel_at` 指定的一端；`auto` 时应落在长轴较窄的一端
 
 ### C. 切片可读性
 
@@ -416,7 +438,7 @@ python scripts/export_bambu_project_3mf.py
 ## 参数调优建议
 
 - 想快速换一套整体风格：先切换 `default_profile`
-- 想试“过渡区更少墙”的近似渐变：建议仅通过 `zone_settings_overrides` 对少数分区启用更低的局部墙数，而不要全局开启局部墙
+- 直出晶格 STL 的分区过渡由 `tpms.transition_mm` 混合阈值；拓竹工程 `3MF` 保持离散分区密度，不加过渡 modifier，默认不写局部墙
 - 想让边界更平滑：先降低 `voxel_pitch_mm`
 - 想让足弓更有支撑：提高 `innerArch`
 - 想让前掌更软：降低 `innerForefoot`、`centralForefoot`、`outerForefoot`
@@ -442,11 +464,9 @@ python -m unittest discover -s tests
 ## 限制与说明
 
 - 默认参数是工程起点，不应替代临床处方或个体化医疗建议
-- 工程 `3MF` 目前面向 Bambu Studio 风格模板，其他切片器可能需要重新适配模板字段
+- 工程 `3MF` 需要一份已有的拓竹模板，不会从零生成完整打印机配置。只有模板里已有的 `nozzle_diameter`、`filament_type`、`layer_height` 会被 `print_preset`（喷嘴 `0.4 mm`、材料 `TPU 95A`、层高 `0.2 mm`）覆盖；找不到模板时导出失败并提示找不到模板。其他切片器可能需要重新适配模板字段
 - 默认阈值和密度更偏向日常支撑/缓冲场景，运动场景通常需要重新调参
 
 ## 后续改进方向
 
 - 补充示例分区预览截图
-- 模板 `3MF` 的来源和适配说明
-- 一组默认打印材料和切片参数参考

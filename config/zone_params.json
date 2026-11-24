@@ -22,6 +22,7 @@
     "surface_axis": "z",
     "surface_direction": "positive",
     "target_thickness_mm": 6.0,
+    "max_relief_mm": 8.0,
     "bottom_clearance_mm": 0.5,
     "outline_margin_mm": 2.0,
     "smoothing_iterations": 0,
@@ -42,6 +43,7 @@
     "toe_curve_mm": 12.0,
     "center_power": 1.6,
     "inner_side": "auto",
+    "heel_at": "auto",
     "forefoot_center_width_ratio": 0.28
   },
   "edge_frame_margin_mm": 5.0,
@@ -62,6 +64,12 @@
     "top_skin_layers": 1,
     "top_dense_layers": 1,
     "top_dense_threshold_boost": 0.08
+  },
+  "print_preset": {
+    "nozzle_diameter_mm": 0.4,
+    "material": "TPU 95A",
+    "layer_height_mm": 0.2,
+    "notes": "已用 0.4 mm 喷嘴和 TPU 95A 试穿，分区 modifier 不写局部墙。"
   },
   "output": {
     "root": "output"
